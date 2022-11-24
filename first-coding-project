@@ -1,0 +1,297 @@
+# Measuring the relationship between the S&P 500 and unemployment/disposable income
+## Md Abyan Wahed, Maw5683
+
+## Introduction
+
+
+For this project, I wanted to apply my technical skills on a real-world economic situation that measured how unemployment levels and disposable income could affect the S&P 500, an index fund of 500 large companies. For my first dataset, I acquired the data using the 'quantmod' library, which pulled out the daily high, low, open, close, and adjusted prices for the S&P 500 since 2007. Then, I retrieved the unemployment data from "stlouisfed.org" which provided me with the unemployment levels in the US by month since 2012. Lastly, I obtained the disposable income data from the Bureau of Labor & Statistics website, which produced the disposable income per capita in the US since 2012. I predict that both unemployment and disposable income will have a great impact on the S&P 500. I assume that unemployment levels and the S&P 500 would have a strong inverse relationship, whereas disposable income and the S&P 500 would have a strong positive relationship.
+
+
+Datasets:
+S&P 500: Yahoo Finance, quantmod library
+
+Disposable Income per Capita: https://fred.stlouisfed.org/series/A229RC0
+
+Unemployment Level by Thousands: https://data.bls.gov/cgi-bin/surveymost
+
+
+```{r, warning = FALSE, message = FALSE}
+## Loading libraries
+library(tidyverse)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(TTR)
+library(quantmod)
+library(readxl)
+library(readr)
+library(knitr)
+library(data.table)
+```
+
+
+## Tidying
+
+
+Here, I grab the S&P 500 data from Yahoo Finance with a function from 'quantmod'. 
+```{r}
+gspc <- getSymbols('^GSPC', src = "yahoo", auto.assign = FALSE)
+df_gspc <- as.data.frame(gspc) ## Converting into data frame
+```
+
+
+Then, I set the row names as the column headers and created a dataset that only showed the first day of every month since 2012, as this is when the dates for my other datasets begin. I had to recode the third of every January to the first as Yahoo Finance didn't record the prices on the first of every January.
+```{r}
+setDT(df_gspc, keep.rownames = "Date")
+
+head(df_gspc)
+
+final_gspc <- df_gspc %>%
+  mutate(Date = recode(Date, "2012-01-03" = "2012-01-01", 
+                             "2013-01-03" = "2013-01-01",
+                             "2014-01-03" = "2014-01-01",
+                             "2015-01-03" = "2015-01-01",
+                             "2016-01-03" = "2016-01-01",
+                             "2017-01-03" = "2017-01-01",
+                             "2018-01-03" = "2018-01-01",
+                             "2019-01-03" = "2019-01-01",
+                             "2020-01-03" = "2020-01-01",
+                             "2021-01-03" = "2021-01-01",
+                             "2022-01-03" = "2022-01-01")) %>%
+  mutate(Date = as.Date(Date)) %>%
+  filter(day(Date) == "1") %>%
+  filter(year(Date) >= 2012)
+```
+
+
+Here, I import the unemployment data from excel file I downloaded and remove uninformative rows as well as setting the the first row as the column headers. 
+```{r}
+SeriesReport_20221029190345_1dbae5 <- read_excel("~/Desktop/SeriesReport-20221029190345_1dbae5.xlsx")
+unemployment <- SeriesReport_20221029190345_1dbae5
+unemployment_1 <- unemployment[11:22, ] ## Keep informative rows
+names(unemployment_1) <- unemployment_1[1, ] ## Take first row as column headers
+unemployment_2 <- unemployment_1[-1, ] ## Delete first row
+head(unemployment_2)
+```
+
+I use pivot_longer to tidy the dataset into columns of Year, Month, and value. I recode the months to their numerical values so that they can be merged easily with the Year. 
+```{r}
+unemployment_3 <- unemployment_2 %>%
+  pivot_longer(cols = Jan:Dec, names_to = "Month", values_to = "value")
+head(unemployment_3)
+
+unemployment_4 <- mutate(unemployment_3, Month = recode(unemployment_3$Month, Jan = "1",
+       Feb = "2",
+       Mar = "3",
+       Apr = "4",
+       May = "5",
+       Jun = "6",
+       Jul = "7",
+       Aug = "8",
+       Sep = "9",
+       Oct = "10",
+       Nov = "11",
+       Dec = "12"))
+
+head(unemployment_4)
+```
+
+
+Instead of having just month and year, I added a column of repeating 1's and merged the Year, Month, and Day columns separated by a dash so I could easily use the as.Date function. This would allow me to join with my S&P 500 dataset.
+```{r}
+Day <- c(rep(1,132)) ## Create a vector of 1's with the length of my dataset
+
+unemployment_5 <- unemployment_4 %>%
+  cbind(Day) %>% ## Attach the column of 1's to my dataset
+  select(Year, Month, Day, value) %>%
+  mutate(Date = paste(Year, Month, Day, sep = "-")) %>%
+  mutate(Date = as.Date(Date)) %>%
+  select(Date, value, -Year, -Month, -Day) ## Remove repetitive variables
+
+head(unemployment_5)
+```
+
+
+I import the disposable income data from a csv file and convert the "Date" variable from characters to a Date. 
+```{r}
+A229RC0 <- read_csv("~/Desktop/A229RC0.csv")
+disposable <- A229RC0
+disposable_2 <- disposable %>%
+  mutate(Date = as.Date(DATE)) %>%
+  select(-DATE) %>%
+  rename(DispIncome = A229RC0)
+
+head(disposable_2) 
+```
+
+## Joining/Merging
+
+
+I used left_join on the last unemployment dataset with the S&P 500 data by date and removed any missing values, which matched only dates that existed in the unemployment dataset as the S&P dataset was bigger. I repeated this process with the resulting dataset and the disposable income to combine all 3 of my datasets. Lastly, I created a new column called "OHLC" which took the average the open, close, low, and high daily prices of the S&P 500 and represented it as a kable. 
+```{r}
+sp_vs_un <- 
+  left_join(unemployment_5, final_gspc, by = "Date") %>%
+  filter(!is.na(GSPC.Open)) ## Remove missing values
+
+sp_vs_un_2 <- sp_vs_un %>%
+  mutate(value = as.numeric(value)) ## Convert value from character to numeric
+head(sp_vs_un_2)
+
+join_table <- 
+  left_join(sp_vs_un_2, disposable_2, by = "Date")
+join_table
+
+final_table <- 
+  join_table %>%
+  mutate(OHLC = (GSPC.Open + GSPC.Low + GSPC.High + GSPC.Close)/4) ## Calculating average of the four prices in dataset
+
+kable(head(final_table, n = 20))  ## Display first 20 rows as kable
+```
+
+
+## Data Wrangling
+
+
+For my first categorical statistic, I create a column in the dataset that says "Decrease" if the closing price is less than the opening price and "Increase" if the closing price is greater than the opening price. I then calculate the proportion of "Increase" and "Decrease" in the dataset. For my second categorical variable, I create another column that says "Over" if the volume for the day is greater than the average volume and "Under" for when the volume is less than the average volume. Similar to the first statistic, I calculate the proportion of "Over" and "Under" for the dataset.
+```{r}
+## Categorical Statistics
+
+mean(final_table$GSPC.Volume) ## Determine the mean volume to use in following statement
+final_table$OpenToClose <-
+  ifelse(final_table$GSPC.Open > final_table$GSPC.Close, "Decrease",
+        ifelse(final_table$GSPC.Open < final_table$GSPC.Close, "Increase", "No Change"))
+
+final_table %>%
+  group_by(OpenToClose) %>%
+  count() %>%
+  summarize(prop = n/nrow(final_table))
+
+final_table$VolOverAvg <-
+  ifelse(final_table$GSPC.Volume > 3858156154, "Over",
+         ifelse(final_table$GSPC.Volume < 3858156154, "Under", "Same"))
+
+final_table %>%
+  group_by(VolOverAvg) %>%
+  count() %>%
+  summarize(prop = n/nrow(final_table))
+```
+
+**Results: The daily price for the S&P 500 decreased around 40.66% of the time and increased around 59.34% of the time. Shockingly, these numbers are exactly the same for the volume statistic as the volume is over the average around 40.66% of the time and under the average 59.34% of the time. I checked and these were not the exact same rows.**
+
+
+For my first numerical statistic, I calculate the proportion of unemployment values over 10000 to see what percentage of the time there were more than 10 million people unemployed. Then, I compute the standard deviation of the OHLC price by year. Afterwards, I calculate the correlation between the OHLC and variables including the unemployment levels, the amount of disposable income, and the volume of the S&P 500. Next, I obtain the net change from the the OHLC of the first entry in the dataset to the last entry in the dataset. Lastly, I produce a table that takes the mean volume of each month across the years to determine if there are any seasonal trends in the data. 
+```{r}
+## Numerical statistics
+
+## What's the proportion of unemployment values above 10,000?
+final_table %>%
+  filter(value >= 10000) %>%
+  count() %>%
+  summarize(prop = n / nrow(final_table)) 
+
+## What's the standard deviation of the OHLC by year?  
+final_table %>%
+  group_by(year(Date)) %>%
+  summarize(sd = sd(OHLC))
+
+## What's the correlation between unemployment levels and OHLC price?
+final_table %>%
+  select(-Date) %>%
+  summarize(cor = cor(x = value, y = OHLC))
+
+## What's the correlation between disposable income and OHLC price?
+final_table %>%
+  select(-Date) %>%
+  summarize(cor = cor(x = DispIncome, y = OHLC))
+
+## What's the correlation between volume and OHLC price?
+final_table %>%
+  select(-Date) %>%
+  summarize(cor = cor(x = GSPC.Volume, y = OHLC))
+
+## What's the net change of the S&P 500 since 2012?
+final_table %>%
+  summarize(netchange = OHLC[91] - OHLC[1])
+
+## What's the mean volume of the S&P 500 by month since 2012?
+monthly_volume <- final_table %>%
+  group_by(month(Date)) %>%
+  summarize(meanVol = mean(GSPC.Volume)) %>%
+  rename(Month = "month(Date)")
+monthly_volume
+```
+
+**Results: There were over 10 million people unemployed in the US for 27.47% of the entries, and the data seems to spread far apart. Unemployment levels and the OHLC have a weak negative correlation. Disposable income and the OHLC have a strong positive correlation. The volume and the OHLC have almost no correlation. The net change of the S&P 500 from 2012 to 2022 is around 2,700.**
+
+
+## Data Visualization
+
+
+First, I model the relationship between OHLC and disposable income.
+```{r}
+final_table %>%
+  ggplot(aes(x = DispIncome, y = OHLC)) +
+  geom_point() + 
+  geom_smooth() +
+  scale_x_continuous() + 
+  scale_y_continuous() +
+  ggtitle("Disposable Income (per capita) vs. Open-High-Low-Close Price", 
+          subtitle = ("Relationship between disposable income and OHLC of S&P 500 from 2012-2022")) + 
+  xlab("Disposable income per capita (in dollars)") +
+  ylab("OHLC Price of S&P 500") +
+  theme_classic()
+```
+
+**Results: The plot clearly depicts a strong positive relationship between diposable income and the OHLC price of the S&P 500. This means that as disposable income grows, OHLC price tends to increase as well, and when disposable income decreases, the OHLC price tends to decrease as well. Basically, OHLC price and disposable income tend to move in the same direction. This suggests that disposable income per capita has a great impact on the OHLC price of the S&P 500.**
+
+
+Then, I model the relationship between unemployment levels and the OHLC price of the S&P 500.
+```{r}
+arrange(final_table, value) %>%
+  ggplot(aes(x = value, y = OHLC)) +
+  geom_point() +
+  geom_smooth() + 
+  scale_x_continuous() + 
+  scale_y_continuous() +
+  ggtitle("Unemployment Levels (in thousands) vs. Open-High-Low-Close Price", 
+          subtitle = ("Relationship between unemployment levels and OHLC of S&P 500 from 2012-2022")) + 
+  xlab("Number of unemployed people in the US (in thousands)") + 
+  ylab("OHLC Price of S&P 500") +
+  theme_minimal()
+```
+
+**Results: There isn't an obvious trend in this plot, but it seems that there's a weak relationship between unemployment levels and the OHLC price of the S&P 500. This is apparent in the regression line, the correlation statistic, and the slight tendency for OHLC to decrease as unemployment levels in the US increase. This suggests that higher unemployment levels negatively impact the price of the S&P 500.**
+
+
+Next, I model the price changes of the S&P 5000 since 2012.
+```{r}
+arrange(final_table, value) %>%
+  ggplot(aes(x = Date, y = OHLC)) +
+  geom_point() +
+  geom_line(color = "red") + 
+  scale_x_date() +
+  scale_y_continuous() + 
+  ggtitle("Open-High-Low-Close Price of S&P 500 from 2012-2022") + 
+  xlab("Time") + 
+  ylab("OHLC Price of S&P 500") +
+  theme_bw()
+```
+
+**Results: The obvious trend here is that the OHLC price of the S&P 500 seems to consistently grow despite a couple of minor fluctuations, which is the main reason investors choose this index fund for safe growth. The rate of growth seems to have increased by some extent in recent years. Also, the biggest observable drop in the OHLC price seems to have occured during 2020, which was during the Coronavirus pandemic. This is logical as the US experienced a major recession during the pandemic.**
+
+
+Lastly, I create a bar chart of the mean volume of the S&P 500 by month. 
+```{r}
+monthly_volume %>%
+  ggplot(aes(x = Month, y = meanVol, fill = Month)) +
+  geom_bar(stat = "identity") + 
+  scale_x_continuous() + 
+  scale_y_continuous() + 
+  ggtitle("Mean Volume of S&P 500 by Month since 2012-2022") +
+  xlab("Month of Year") + 
+  ylab("Mean Volume of S&P 500") + 
+  theme_dark() + 
+  scale_fill_viridis_c()
+```
+
+**Results: There are no major distinctions between months as I would have hoped, but it seems that March and December have the highest mean volumes. On the other hand, January and July seem to have the lowest volumes on average. This suggests that the number of shares traded is higher in March and December, which means that trading activity is more frequent during these two months.**
